@@ -1,0 +1,458 @@
+"use client";
+
+import { useActionState, useState, useRef, useEffect } from "react";
+import { Plus, X } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { saveDsr, type SaveDsrState } from "../actions/save-dsr";
+import type { DsrEntryData, DsrStandupPrefill } from "../queries";
+
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+type TaskItem = { id?: string; text: string; priority: string | null; completed: boolean };
+type TextItem = { id?: string; text: string };
+type CheckItem = { id?: string; text: string; completed: boolean };
+
+// ── Reusable checkbox list section ────────────────────────────────────────────
+
+function CheckSection({
+  title,
+  badge,
+  items,
+  onChange,
+  allowAdd,
+  addLabel,
+}: {
+  title: string;
+  badge: string;
+  items: CheckItem[];
+  onChange: (items: CheckItem[]) => void;
+  allowAdd?: boolean;
+  addLabel?: string;
+}) {
+  const toggle = (i: number) =>
+    onChange(items.map((item, j) => (j === i ? { ...item, completed: !item.completed } : item)));
+  const add = () => onChange([...items, { text: "", completed: true }]);
+  const update = (i: number, text: string) =>
+    onChange(items.map((item, j) => (j === i ? { ...item, text } : item)));
+  const remove = (i: number) => onChange(items.filter((_, j) => j !== i));
+
+  return (
+    <div className="rounded-xl border bg-card p-5">
+      <div className="mb-4 flex items-center justify-between">
+        <h3 className="text-sm font-semibold">{title}</h3>
+        <span className="text-xs text-muted-foreground">{badge}</span>
+      </div>
+      <div className="flex flex-col gap-2.5">
+        {items.map((item, i) => (
+          <div key={i} className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => toggle(i)}
+              className={cn(
+                "flex h-5 w-5 shrink-0 items-center justify-center rounded border-2 transition-colors",
+                item.completed
+                  ? "border-primary bg-primary text-primary-foreground"
+                  : "border-border bg-background"
+              )}
+            >
+              {item.completed && (
+                <svg viewBox="0 0 8 8" fill="none" stroke="currentColor" strokeWidth="2" className="h-2.5 w-2.5">
+                  <polyline points="1,4 3,6 7,2" />
+                </svg>
+              )}
+            </button>
+            <input
+              type="text"
+              value={item.text}
+              onChange={(e) => update(i, e.target.value)}
+              placeholder="Add item..."
+              className={cn(
+                "flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground/40",
+                !item.completed && "text-muted-foreground"
+              )}
+            />
+            {allowAdd && (
+              <button type="button" onClick={() => remove(i)} className="shrink-0 text-muted-foreground hover:text-destructive">
+                <X size={12} />
+              </button>
+            )}
+          </div>
+        ))}
+        {allowAdd && (
+          <button
+            type="button"
+            onClick={add}
+            className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-primary"
+          >
+            <Plus size={12} /> {addLabel ?? "Add item"}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Planned tasks section (with priority chips) ───────────────────────────────
+
+const PRIORITY_COLORS = {
+  P1: "bg-destructive/10 text-destructive",
+  P2: "bg-amber-100 text-amber-700",
+  P3: "bg-sky-50 text-sky-700",
+};
+
+function PlannedTasksSection({
+  tasks,
+  onChange,
+}: {
+  tasks: TaskItem[];
+  onChange: (t: TaskItem[]) => void;
+}) {
+  const completed = tasks.filter((t) => t.completed).length;
+  const toggle = (i: number) =>
+    onChange(tasks.map((t, j) => (j === i ? { ...t, completed: !t.completed } : t)));
+
+  return (
+    <div className="rounded-xl border bg-card p-5">
+      <div className="mb-4 flex items-center justify-between">
+        <h3 className="text-sm font-semibold">Today&apos;s Planned Tasks Completed</h3>
+        <span className="text-xs text-muted-foreground">{completed}/{tasks.length} TASKS COMPLETED</span>
+      </div>
+      <div className="flex flex-col gap-2.5">
+        {tasks.map((task, i) => (
+          <div key={i} className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => toggle(i)}
+              className={cn(
+                "flex h-5 w-5 shrink-0 items-center justify-center rounded border-2 transition-colors",
+                task.completed
+                  ? "border-primary bg-primary text-primary-foreground"
+                  : "border-border bg-background"
+              )}
+            >
+              {task.completed && (
+                <svg viewBox="0 0 8 8" fill="none" stroke="currentColor" strokeWidth="2" className="h-2.5 w-2.5">
+                  <polyline points="1,4 3,6 7,2" />
+                </svg>
+              )}
+            </button>
+            <span className={cn(
+              "flex-1 text-sm",
+              !task.completed && "text-muted-foreground"
+            )}>
+              T{i + 1}: {task.text}
+            </span>
+            {task.priority && (
+              <span className={cn(
+                "shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase",
+                PRIORITY_COLORS[task.priority as keyof typeof PRIORITY_COLORS] ?? "bg-muted text-muted-foreground"
+              )}>
+                {task.priority}
+              </span>
+            )}
+          </div>
+        ))}
+        {tasks.length === 0 && (
+          <p className="text-sm text-muted-foreground/60">
+            No planned tasks from today&apos;s DSM. Add tasks in the blockers section or submit anyway.
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Additional work section ───────────────────────────────────────────────────
+
+function AdditionalWorkSection({
+  items,
+  taskLabels,
+  onChange,
+}: {
+  items: TextItem[];
+  taskLabels: string[];
+  onChange: (items: TextItem[]) => void;
+}) {
+  const add = () => onChange([...items, { text: "" }]);
+  const update = (i: number, text: string) =>
+    onChange(items.map((item, j) => (j === i ? { text } : item)));
+  const remove = (i: number) => onChange(items.filter((_, j) => j !== i));
+
+  return (
+    <div className="rounded-xl border bg-card p-5">
+      <div className="mb-4 flex items-center justify-between">
+        <h3 className="text-sm font-semibold">Additional Work Done Today</h3>
+        <button
+          type="button"
+          onClick={add}
+          className="flex h-6 w-6 items-center justify-center rounded-full border text-muted-foreground hover:bg-accent hover:text-primary"
+        >
+          <Plus size={12} />
+        </button>
+      </div>
+      <div className="flex flex-col gap-3">
+        {items.map((item, i) => (
+          <div key={i} className="flex flex-col gap-1">
+            <span className="text-xs font-medium text-muted-foreground">
+              {taskLabels[i] ? `T${i + 1}` : `T${i + 1}`}
+            </span>
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                value={item.text}
+                onChange={(e) => update(i, e.target.value)}
+                placeholder={`Additional work for T${i + 1}...`}
+                className="flex-1 rounded-md border bg-background px-3 py-2 text-sm outline-none focus:border-primary placeholder:text-muted-foreground/50"
+              />
+              <button type="button" onClick={() => remove(i)} className="shrink-0 text-muted-foreground hover:text-destructive">
+                <X size={13} />
+              </button>
+            </div>
+          </div>
+        ))}
+        {items.length === 0 && (
+          <p className="text-sm text-muted-foreground/50 italic">
+            Click + to add any extra work completed outside the planned tasks.
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Day reflection section ────────────────────────────────────────────────────
+
+function DayReflection({
+  sentiment,
+  onSentiment,
+  reflection,
+  onReflection,
+  resultOfDay,
+  onResultOfDay,
+  errors,
+}: {
+  sentiment: string;
+  onSentiment: (s: string) => void;
+  reflection: string;
+  onReflection: (s: string) => void;
+  resultOfDay: string;
+  onResultOfDay: (s: string) => void;
+  errors?: string[];
+}) {
+  return (
+    <div className="rounded-xl border bg-card p-5">
+      <h3 className="mb-4 text-sm font-semibold">Day Reflection</h3>
+
+      <div className="flex flex-col gap-4">
+        <div>
+          <label className="mb-2 block text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
+            Sentiment
+          </label>
+          <div className="flex gap-2">
+            {["BREAKTHROUGH", "BREAKDOWN"].map((s) => (
+              <button
+                key={s}
+                type="button"
+                onClick={() => onSentiment(sentiment === s ? "" : s)}
+                className={cn(
+                  "flex items-center gap-1.5 rounded-lg border px-4 py-2 text-sm font-medium transition-colors",
+                  sentiment === s
+                    ? s === "BREAKTHROUGH"
+                      ? "border-primary bg-primary text-primary-foreground"
+                      : "border-destructive/50 bg-destructive/5 text-destructive"
+                    : "border-border text-muted-foreground hover:bg-accent"
+                )}
+              >
+                {s === "BREAKTHROUGH" ? "⚡" : "↘"} {s === "BREAKTHROUGH" ? "Breakthrough" : "Breakdown"}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div>
+          <label className="mb-2 block text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
+            Result of the Day
+          </label>
+          <textarea
+            value={resultOfDay}
+            onChange={(e) => onResultOfDay(e.target.value)}
+            placeholder="What was the singular most important outcome of today?"
+            rows={3}
+            className="w-full resize-none rounded-md border bg-background px-3 py-2 text-sm outline-none focus:border-primary placeholder:text-muted-foreground/50"
+          />
+        </div>
+
+        <div>
+          <label className="mb-2 flex items-center gap-1 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
+            What did you learn?
+            <span className="text-destructive">*</span>
+          </label>
+          <textarea
+            value={reflection}
+            onChange={(e) => onReflection(e.target.value)}
+            placeholder="Documenting new learnings..."
+            rows={3}
+            className="w-full resize-none rounded-md border bg-background px-3 py-2 text-sm outline-none focus:border-primary placeholder:text-muted-foreground/50"
+          />
+          {errors?.[0] && <p className="mt-1 text-xs text-destructive">{errors[0]}</p>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Main form ─────────────────────────────────────────────────────────────────
+
+type Props = {
+  entry: DsrEntryData | null;
+  prefill: DsrStandupPrefill;
+  todayDateStr: string;
+  onRegisterSubmit?: (fn: () => void) => void;
+};
+
+export function DsrForm({ entry, prefill, todayDateStr, onRegisterSubmit }: Props) {
+  const [state, action, pending] = useActionState<SaveDsrState, FormData>(saveDsr, {});
+  const formRef = useRef<HTMLFormElement>(null);
+
+  // Initialize state from existing entry or DSM prefill
+  const [tasks, setTasks] = useState<TaskItem[]>(() => {
+    if (entry?.plannedTasks.length) {
+      return entry.plannedTasks.map((t) => ({
+        id: t.id, text: t.text, priority: t.priority, completed: t.completed,
+      }));
+    }
+    return prefill.plannedTasks.map((t) => ({
+      text: t.text, priority: t.priority, completed: false,
+    }));
+  });
+
+  const [additionalWorks, setAdditionalWorks] = useState<TextItem[]>(() =>
+    entry?.additionalWorks.map((w) => ({ id: w.id, text: w.text })) ?? []
+  );
+
+  const [blockers, setBlockers] = useState<CheckItem[]>(() => {
+    if (entry?.resolvedBlockers.length) {
+      return entry.resolvedBlockers.map((b) => ({ id: b.id, text: b.text, completed: b.resolved }));
+    }
+    return prefill.blockers.map((b) => ({ text: b.text, completed: false }));
+  });
+
+  const [followUps, setFollowUps] = useState<CheckItem[]>(() => {
+    if (entry?.followUpsDone.length) {
+      return entry.followUpsDone.map((f) => ({ id: f.id, text: f.text, completed: f.completed }));
+    }
+    return prefill.followUps.map((f) => ({ text: f.text, completed: false }));
+  });
+
+  const [sentiment, setSentiment] = useState<string>(entry?.sentiment ?? "");
+  const [resultOfDay, setResultOfDay] = useState<string>(entry?.resultOfDay ?? "");
+  const [reflection, setReflection] = useState<string>(entry?.reflection ?? "");
+
+  function buildAndSubmit(actionValue: "draft" | "submit") {
+    if (!formRef.current) return;
+    const fd = new FormData(formRef.current);
+    fd.set("action", actionValue);
+    fd.set("plannedTasksJson", JSON.stringify(tasks));
+    fd.set("additionalWorksJson", JSON.stringify(additionalWorks));
+    fd.set("resolvedBlockersJson", JSON.stringify(blockers.map((b) => ({
+      id: b.id, text: b.text, resolved: b.completed,
+    }))));
+    fd.set("followUpsDoneJson", JSON.stringify(followUps.map((f) => ({
+      id: f.id, text: f.text, completed: f.completed,
+    }))));
+    fd.set("sentiment", sentiment);
+    fd.set("reflection", reflection);
+    fd.set("resultOfDay", resultOfDay);
+    action(fd);
+  }
+
+  // Keep a ref to buildAndSubmit so the panel's registered callback always uses fresh state
+  const buildAndSubmitRef = useRef(buildAndSubmit);
+  useEffect(() => {
+    buildAndSubmitRef.current = buildAndSubmit;
+  });
+
+  useEffect(() => {
+    onRegisterSubmit?.(() => buildAndSubmitRef.current("submit"));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return (
+    <form ref={formRef} className="flex flex-col gap-4" onSubmit={(e) => e.preventDefault()}>
+      <input type="hidden" name="date" value={todayDateStr} />
+      <input type="hidden" name="action" value="draft" />
+      <input type="hidden" name="plannedTasksJson" value={JSON.stringify(tasks)} />
+      <input type="hidden" name="additionalWorksJson" value="[]" />
+      <input type="hidden" name="resolvedBlockersJson" value="[]" />
+      <input type="hidden" name="followUpsDoneJson" value="[]" />
+      <input type="hidden" name="sentiment" value={sentiment} />
+      <input type="hidden" name="reflection" value={reflection} />
+      <input type="hidden" name="resultOfDay" value={resultOfDay} />
+
+      <PlannedTasksSection tasks={tasks} onChange={setTasks} />
+
+      <AdditionalWorkSection
+        items={additionalWorks}
+        taskLabels={tasks.map((t) => t.text)}
+        onChange={setAdditionalWorks}
+      />
+
+      <CheckSection
+        title="Blockers Resolved"
+        badge={`${blockers.filter((b) => b.completed).length}/${blockers.length} BLOCKERS RESOLVED`}
+        items={blockers}
+        onChange={setBlockers}
+        allowAdd
+        addLabel="Add resolved blocker"
+      />
+
+      <CheckSection
+        title="Follow-ups Done"
+        badge={`${followUps.filter((f) => f.completed).length}/${followUps.length} FOLLOW-UPS COMPLETED`}
+        items={followUps}
+        onChange={setFollowUps}
+        allowAdd
+        addLabel="Add follow-up"
+      />
+
+      <DayReflection
+        sentiment={sentiment}
+        onSentiment={setSentiment}
+        reflection={reflection}
+        onReflection={setReflection}
+        resultOfDay={resultOfDay}
+        onResultOfDay={setResultOfDay}
+        errors={state.errors?.reflection}
+      />
+
+      {state.message === "saved" && (
+        <p className="text-xs text-muted-foreground">Draft saved.</p>
+      )}
+      {state.message && state.message !== "saved" && (
+        <p className="text-xs text-destructive">
+          {state.message === "Unauthorized" ? "Session expired. Please sign in again." : state.message}
+        </p>
+      )}
+
+      {/* Mobile-only submit (desktop uses panel button) */}
+      <div className="flex items-center gap-3 xl:hidden">
+        <button
+          type="button"
+          disabled={pending}
+          onClick={() => buildAndSubmit("draft")}
+          className="flex-1 rounded-lg border py-2 text-sm font-medium hover:bg-accent disabled:opacity-50"
+        >
+          Save Draft
+        </button>
+        <button
+          type="button"
+          disabled={pending}
+          onClick={() => buildAndSubmit("submit")}
+          className="flex-1 rounded-lg bg-primary py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
+        >
+          {pending ? "Submitting…" : "Submit DSR"}
+        </button>
+      </div>
+    </form>
+  );
+}

@@ -14,6 +14,53 @@ enum UserRole {
   MANAGER
 }
 
+enum NoteType {
+  TEXT
+  CHECKLIST
+}
+
+enum StandupStatus {
+  DRAFT
+  SUBMITTED
+  PENDING_REVIEW
+  REVIEWED
+  MISSED
+}
+
+enum TaskKind {
+  YESTERDAY
+  TODAY
+}
+
+enum BlockerPriority {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum TaskPriority {
+  P1
+  P2
+  P3
+}
+
+enum NotificationType {
+  DSM_REMINDER
+}
+
+enum DsrStatus {
+  DRAFT
+  SUBMITTED
+  PENDING_REVIEW
+  REVIEWED
+  MISSED
+}
+
+enum DsrSentiment {
+  BREAKTHROUGH
+  BREAKDOWN
+}
+
 // ─── Auth.js adapter models ───────────────────────────────────────────────────
 // Field names are mandated by @auth/prisma-adapter — do not rename them.
 
@@ -23,13 +70,27 @@ model User {
   email         String    @unique
   emailVerified DateTime?
   image         String?
-  password      String?   // null for OAuth-only users
+  password      String?
   role          UserRole  @default(TEAM_MEMBER)
+  title         String?   // Job title shown in @mention dropdowns
 
   accounts      Account[]
   sessions      Session[]
-  standupEntries StandupEntry[]
   notes         Note[]
+  notebooks     Notebook[]
+  tags          Tag[]
+
+  // DSM relations
+  standupEntries   StandupEntry[]       @relation("UserStandups")
+  reviewedStandups StandupEntry[]       @relation("ReviewedStandups")
+  supportMentions  StandupSupportNeed[] @relation("SupportMentions")
+  workspaceNote    DsmWorkspaceNote?    @relation("WorkspaceNotes")
+  ledTeams              Team[]               @relation("TeamLead")
+  teamMemberships       TeamMember[]
+  receivedNotifications Notification[]       @relation("ReceivedNotifications")
+  sentNotifications     Notification[]       @relation("SentNotifications")
+  dsrEntries            DsrEntry[]           @relation("UserDsrEntries")
+  reviewedDsrs          DsrEntry[]           @relation("DsrReviewedBy")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -75,31 +136,336 @@ model VerificationToken {
   @@id([identifier, token])
 }
 
-// ─── Application models ───────────────────────────────────────────────────────
+// ─── DSM — Structured standup models ─────────────────────────────────────────
 
+// One entry per user per working day. Unique enforced at DB level.
 model StandupEntry {
-  id       String   @id @default(cuid())
-  date     DateTime @default(now())
-  yesterday String
-  today     String
-  blockers  String?
+  id           String        @id @default(cuid())
+  date         DateTime      // UTC midnight of the standup day
+  status        StandupStatus @default(DRAFT)
+  submittedAt   DateTime?
+  reviewedAt    DateTime?
+  reviewedById  String?
+  reviewedBy    User?         @relation("ReviewedStandups", fields: [reviewedById], references: [id])
+  reviewComment String?
 
   userId String
+  user   User   @relation("UserStandups", fields: [userId], references: [id], onDelete: Cascade)
+
+  tasks        StandupTask[]
+  blockers     StandupBlocker[]
+  supportNeeds StandupSupportNeed[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, date])
+}
+
+model StandupTask {
+  id              String        @id @default(cuid())
+  entryId         String
+  entry           StandupEntry  @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  kind            TaskKind
+  text            String
+  order           Int           @default(0)
+  managerPriority TaskPriority?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model StandupBlocker {
+  id       String          @id @default(cuid())
+  entryId  String
+  entry    StandupEntry    @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  text     String
+  priority BlockerPriority @default(MEDIUM)
+  resolved Boolean         @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model StandupSupportNeed {
+  id              String       @id @default(cuid())
+  entryId         String
+  entry           StandupEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  text            String
+  mentionedUserId String?
+  mentionedUser   User?        @relation("SupportMentions", fields: [mentionedUserId], references: [id])
+  order           Int          @default(0)
+  resolved        Boolean      @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// Team workspace note — one per user (manager writes team-wide note visible to members).
+model DsmWorkspaceNote {
+  id      String  @id @default(cuid())
+  title   String
+  body    String
+  keyNote String?
+
+  ownerId String @unique
+  owner   User   @relation("WorkspaceNotes", fields: [ownerId], references: [id], onDelete: Cascade)
+
+  actionItems DsmActionItem[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model DsmActionItem {
+  id      String           @id @default(cuid())
+  noteId  String
+  note    DsmWorkspaceNote @relation(fields: [noteId], references: [id], onDelete: Cascade)
+  text    String
+  checked Boolean          @default(false)
+  order   Int              @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ─── Notifications ────────────────────────────────────────────────────────────
+
+model Notification {
+  id      String           @id @default(cuid())
+  type    NotificationType
+  title   String
+  message String
+
+  userId    String
+  user      User   @relation("ReceivedNotifications", fields: [userId], references: [id], onDelete: Cascade)
+
+  createdById String
+  createdBy   User   @relation("SentNotifications", fields: [createdById], references: [id])
+
+  readAt DateTime?
+
+  // Optional context links
+  relatedEntryId String?
+  teamId         String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ─── Teams ────────────────────────────────────────────────────────────────────
+
+model Team {
+  id              String  @id @default(cuid())
+  name            String
+  department      String?
+  description     String?
+  requireApproval Boolean @default(false)
+  notifyMembers   Boolean @default(true)
+  allowEdits      Boolean @default(false)
+
+  leadId String?
+  lead   User?   @relation("TeamLead", fields: [leadId], references: [id])
+
+  members TeamMember[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model TeamMember {
+  id     String @id @default(cuid())
+  teamId String
+  userId String
+  team   Team   @relation(fields: [teamId], references: [id], onDelete: Cascade)
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([teamId, userId])
+}
+
+// ─── DSR — Daily Status Review (Evening Review) ──────────────────────────────
+
+model DsrEntry {
+  id                 String       @id @default(cuid())
+  userId             String
+  user               User         @relation("UserDsrEntries", fields: [userId], references: [id], onDelete: Cascade)
+  date               DateTime
+  status             DsrStatus    @default(DRAFT)
+
+  completionPercent  Int          @default(0)
+  plannedTaskCount   Int          @default(0)
+  completedTaskCount Int          @default(0)
+
+  sentiment          DsrSentiment?
+  resultOfDay        String?
+  reflection         String?
+
+  managerComment     String?
+  submittedAt        DateTime?
+  reviewedAt         DateTime?
+  reviewedById       String?
+  reviewedBy         User?        @relation("DsrReviewedBy", fields: [reviewedById], references: [id])
+
+  plannedTasks     DsrPlannedTask[]
+  additionalWorks  DsrAdditionalWork[]
+  resolvedBlockers DsrResolvedBlocker[]
+  followUpsDone    DsrFollowUpDone[]
+  timelineEvents   DsrTimelineEvent[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, date])
+}
+
+model DsrPlannedTask {
+  id         String        @id @default(cuid())
+  dsrEntryId String
+  dsrEntry   DsrEntry      @relation(fields: [dsrEntryId], references: [id], onDelete: Cascade)
+  text       String
+  priority   TaskPriority?
+  completed  Boolean       @default(false)
+  order      Int           @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model DsrAdditionalWork {
+  id         String   @id @default(cuid())
+  dsrEntryId String
+  dsrEntry   DsrEntry @relation(fields: [dsrEntryId], references: [id], onDelete: Cascade)
+  text       String
+  order      Int      @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model DsrResolvedBlocker {
+  id         String   @id @default(cuid())
+  dsrEntryId String
+  dsrEntry   DsrEntry @relation(fields: [dsrEntryId], references: [id], onDelete: Cascade)
+  text       String
+  resolved   Boolean  @default(true)
+  order      Int      @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model DsrFollowUpDone {
+  id         String   @id @default(cuid())
+  dsrEntryId String
+  dsrEntry   DsrEntry @relation(fields: [dsrEntryId], references: [id], onDelete: Cascade)
+  text       String
+  completed  Boolean  @default(true)
+  order      Int      @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model DsrTimelineEvent {
+  id         String   @id @default(cuid())
+  dsrEntryId String
+  dsrEntry   DsrEntry @relation(fields: [dsrEntryId], references: [id], onDelete: Cascade)
+  type       String   // SUBMITTED | OPENED | REVIEWED | APPROVED
+  label      String
+  occurredAt DateTime
+
+  createdAt DateTime @default(now())
+}
+
+// ─── Notes organisation ───────────────────────────────────────────────────────
+
+model Notebook {
+  id    String  @id @default(cuid())
+  name  String
+  color String?
+
+  ownerId String
+  owner   User   @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+  notes Note[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([name, ownerId])
+}
+
+model Tag {
+  id   String @id @default(cuid())
+  name String
+
+  ownerId String
+  owner   User   @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+  notes NoteTag[]
+
+  createdAt DateTime @default(now())
+
+  @@unique([name, ownerId])
+}
+
+model NoteTag {
+  noteId String
+  tagId  String
+
+  note Note @relation(fields: [noteId], references: [id], onDelete: Cascade)
+  tag  Tag  @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([noteId, tagId])
+}
+
+model ChecklistItem {
+  id       String  @id @default(cuid())
+  text     String
+  checked  Boolean @default(false)
+  position Int     @default(0)
+
+  noteId String
+  note   Note   @relation(fields: [noteId], references: [id], onDelete: Cascade)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
 
 model Note {
-  id       String  @id @default(cuid())
-  title    String
-  content  Json    // Tiptap JSON document
-  isShared Boolean @default(true)
+  id         String    @id @default(cuid())
+  title      String
+  content    String
+  type       NoteType  @default(TEXT)
+  color      String?
+  isPinned   Boolean   @default(false)
+  reminderAt DateTime?
+
+  notebookId String?
+  notebook   Notebook? @relation(fields: [notebookId], references: [id], onDelete: SetNull)
 
   authorId String
   author   User   @relation(fields: [authorId], references: [id], onDelete: Cascade)
 
+  tags           NoteTag[]
+  checklistItems ChecklistItem[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+// ─── OTP authentication ───────────────────────────────────────────────────────
+
+model OtpToken {
+  id             String    @id @default(cuid())
+  email          String
+  code           String
+  expiresAt      DateTime
+  usedAt         DateTime?
+  failedAttempts Int       @default(0)
+  createdAt      DateTime  @default(now())
+
+  @@index([email])
 }

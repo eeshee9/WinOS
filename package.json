@@ -7,7 +7,13 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "db:seed": "npx tsx prisma/seed.ts"
+    "db:seed": "npx tsx prisma/seed.ts",
+    "db:inspect": "tsx scripts/debug-db.ts",
+    "db:restart": "npx prisma dev stop winos && npx prisma dev --detach --name winos && node scripts/wait-db.mjs",
+    "db:schema": "prisma db push && prisma generate && node -e \"const fs=require('fs'),p='.next';fs.rmSync(p,{recursive:true,force:true});console.log('cleared '+p)\"",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "smoke": "node scripts/smoke.mjs"
   },
   "prisma": {
     "seed": "npx tsx prisma/seed.ts"
@@ -25,6 +31,7 @@
     "lucide-react": "^1.16.0",
     "next": "16.2.6",
     "next-auth": "^5.0.0-beta.31",
+    "nodemailer": "^7.0.13",
     "pg": "^8.21.0",
     "prisma": "^7.8.0",
     "react": "19.2.4",
@@ -32,9 +39,11 @@
     "tailwind-merge": "^3.6.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.60.0",
     "@tailwindcss/postcss": "^4",
     "@types/bcryptjs": "^2.4.6",
     "@types/node": "^20",
+    "@types/nodemailer": "^8.0.0",
     "@types/pg": "^8.20.0",
     "@types/react": "^19",
     "@types/react-dom": "^19",
@@ -43,6 +52,8 @@
     "eslint-config-next": "16.2.6",
     "tailwindcss": "^4",
     "tsx": "^4.22.3",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vite-tsconfig-paths": "^6.1.1",
+    "vitest": "^4.1.7"
   }
 }

@@ -1,2 +1,17 @@
-// Notes feature — Shared notes with Tiptap editor
-// TODO: export NoteEditor, NoteList, save/delete actions
+export { NoteCard } from "./components/note-card";
+export { NewNoteForm } from "./components/new-note-form";
+export { NotesList } from "./components/notes-list";
+export { getNotes, getNotebooks } from "./queries";
+export { createNote } from "./actions/create-note";
+export { updateNote } from "./actions/update-note";
+export { deleteNote } from "./actions/delete-note";
+export { togglePin } from "./actions/toggle-pin";
+export { createNotebook } from "./actions/create-notebook";
+export { toggleChecklistItem } from "./actions/toggle-checklist-item";
+export type { NoteWithDetails, NotebookData, ChecklistItemData } from "./queries";
+export type { CreateNoteState } from "./actions/create-note";
+export type { UpdateNoteState } from "./actions/update-note";
+export type { DeleteNoteState } from "./actions/delete-note";
+export type { TogglePinState } from "./actions/toggle-pin";
+export type { CreateNotebookState } from "./actions/create-notebook";
+export type { ToggleItemState } from "./actions/toggle-checklist-item";

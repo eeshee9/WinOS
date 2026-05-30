@@ -1,0 +1,58 @@
+import { auth } from "@/lib/auth";
+import { db } from "@/lib/db";
+
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+export type SupportNeedItem = {
+  id: string;
+  text: string;
+  resolved: boolean;
+  date: Date;
+  entryId: string;
+  raisedBy: { id: string; name: string | null; email: string };
+  supportFrom: { id: string; name: string | null; email: string } | null;
+};
+
+// ── Queries ───────────────────────────────────────────────────────────────────
+
+/**
+ * All support-need items for the current user.
+ * Team member: own entries. Manager: all entries.
+ */
+export async function getMySupportNeeds(): Promise<SupportNeedItem[]> {
+  const session = await auth();
+  if (!session?.user?.id) return [];
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const d = db as any;
+  const isManager = session.user.role === "MANAGER";
+
+  const where = isManager ? {} : { entry: { userId: session.user.id } };
+
+  const rows = await d.standupSupportNeed.findMany({
+    where,
+    include: {
+      entry: {
+        include: { user: { select: { id: true, name: true, email: true } } },
+      },
+      mentionedUser: { select: { id: true, name: true, email: true } },
+    },
+    orderBy: [{ entry: { date: "desc" } }, { order: "asc" }],
+  });
+
+  return rows.map((s: {
+    id: string;
+    text: string;
+    resolved: boolean;
+    entry: { id: string; date: Date; user: { id: string; name: string | null; email: string } };
+    mentionedUser: { id: string; name: string | null; email: string } | null;
+  }) => ({
+    id: s.id,
+    text: s.text,
+    resolved: s.resolved,
+    date: s.entry.date,
+    entryId: s.entry.id,
+    raisedBy: s.entry.user,
+    supportFrom: s.mentionedUser,
+  }));
+}
