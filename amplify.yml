@@ -1,0 +1,31 @@
+version: 1
+frontend:
+  phases:
+    preBuild:
+      commands:
+        - nvm install 20 && nvm use 20
+        - node --version
+        - npm ci
+        # Write all server-side env vars into .env.production before next build.
+        # Amplify injects console env vars into the shell, so ${VAR} expands here.
+        # These vars are consumed server-side only — no NEXT_PUBLIC_ prefix needed.
+        - |
+          printf 'DATABASE_URL=%s\n'  "$DATABASE_URL"  >  .env.production
+          printf 'AUTH_SECRET=%s\n'   "$AUTH_SECRET"   >> .env.production
+          printf 'SMTP_HOST=%s\n'     "$SMTP_HOST"     >> .env.production
+          printf 'SMTP_PORT=%s\n'     "$SMTP_PORT"     >> .env.production
+          printf 'SMTP_USER=%s\n'     "$SMTP_USER"     >> .env.production
+          printf 'SMTP_PASS=%s\n'     "$SMTP_PASS"     >> .env.production
+          printf 'SMTP_FROM=%s\n'     "$SMTP_FROM"     >> .env.production
+        - npx prisma generate
+    build:
+      commands:
+        - npm run build
+  artifacts:
+    baseDirectory: .next
+    files:
+      - '**/*'
+  cache:
+    paths:
+      - node_modules/**/*
+      - .next/cache/**/*
