@@ -30,8 +30,9 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files (can opt-in for committing if needed)
+# env files — .env.example is safe to commit (keys only, no values)
 .env*
+!.env.example
 
 # vercel
 .vercel
@@ -41,4 +42,4 @@ yarn-error.log*
 next-env.d.ts
 
 /generated/prisma
-"test-results/" 
+test-results/
